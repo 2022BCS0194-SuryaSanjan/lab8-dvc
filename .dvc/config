@@ -1,0 +1,5 @@
+[core]
+    remote = s3remote_2022bcs0194
+['remote "s3remote_2022bcs0194"']
+    url = s3://2022bcs0194/dvcstore
+    region = us-east-2
