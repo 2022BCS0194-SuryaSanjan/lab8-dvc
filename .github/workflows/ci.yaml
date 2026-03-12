@@ -1,0 +1,66 @@
+name: ML Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install dvc dvc-s3 scikit-learn pandas numpy flask
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: DVC pull data
+        run: dvc pull
+
+      - name: Train model
+        run: python src/train.py
+
+      - name: Read metrics
+        id: metrics
+        run: |
+          cat metrics/metrics.json
+          echo "rmse=$(python -c 'import json; d=json.load(open("metrics/metrics.json")); print(d["rmse"])')" >> $GITHUB_OUTPUT
+          echo "r2=$(python -c 'import json; d=json.load(open("metrics/metrics.json")); print(d["r2"])')" >> $GITHUB_OUTPUT
+
+      - name: Upload metrics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: metrics/metrics.json
+
+      - name: Write Job Summary
+        run: |
+          echo '## ML Pipeline Results - 2022bcs0194' >> $GITHUB_STEP_SUMMARY
+          echo '| Metric | Value |' >> $GITHUB_STEP_SUMMARY
+          echo '|--------|-------|' >> $GITHUB_STEP_SUMMARY
+          echo "| RMSE   | ${{ steps.metrics.outputs.rmse }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| R2     | ${{ steps.metrics.outputs.r2 }} |" >> $GITHUB_STEP_SUMMARY
+          python -c "import json; d=json.load(open('metrics/metrics.json')); print(f'| Training Samples | {d[\"train_samples\"]} |')" >> $GITHUB_STEP_SUMMARY
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/housing-model:latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/housing-model:latest
